@@ -36,6 +36,10 @@ const reset = document.querySelector('#reset');
 const W=920, H=650;
 let ctx=scene.getContext('2d');
 const backdrops=[];
+const paintedRooms=new Image();
+paintedRooms.src='rooms.jpg';
+const paintedFaces=new Image();
+paintedFaces.src='faces.png';
 const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
 const names=['Лети','Лео'];
 const chapters=['Умывальная','Причёски','Гардероб','Церемония'];
@@ -73,13 +77,15 @@ const targets=[
  [[-35,-8],[-8,-19],[20,-14],[44,4],[-52,24],[49,26]]
 ];
 let state;
+let careEffort=new Map();
 let pointer=null, dragging=false, keyboardIndex=0, particles=[], tick=0, ceremonyStart=0;
+let lastFlow=0;
 function fresh(){
   state={stage:0,person:0,action:0,done:new Set(),tab:'dress',ring:0,characters:[
     {hair:0,color:1,dress:0,suit:0,shirt:0,pants:0,shoes:0,crown:0,tie:0},
     {hair:1,color:0,dress:0,suit:0,shirt:0,pants:0,shoes:0,crown:0,tie:0}
   ]};
-  pointer=null;dragging=false;keyboardIndex=0;particles=[];ceremonyStart=0;
+  pointer=null;dragging=false;keyboardIndex=0;particles=[];ceremonyStart=0;careEffort.clear();
   renderPanel();
 }
 function path(d,fill,stroke,line=2){
@@ -333,6 +339,8 @@ function character(x,y,person,scale=1,party=false){
   const line='#784d58';
   const formal=state.stage>=2;
   ctx.save();ctx.translate(x,y);ctx.scale(scale,scale);
+  const breathe=reduced?0:Math.sin(tick/1100+person)*1.7;
+  ctx.translate(0,breathe);
   oval(0,374,105,15,'#66466428');
   const garment=formal?(person===0?clothing.dress[model.dress][1]:clothing.suit[model.suit][1]):person===0?'#996eb5':'#508a86';
   hairBack(person,style,color);
@@ -407,7 +415,17 @@ function character(x,y,person,scale=1,party=false){
   path('M0 80q-6 12 2 13',null,'#a66766',2);
   if(party&&state.ring>=2){path('M-15 108Q0 114 15 108Q12 126 0 126Q-10 126-15 108Z','#924255','#6e4352',2);path('M-11 111Q0 115 11 111',null,'#fff5ec',3);}
   else path('M-12 109Q0 122 12 109',null,'#87485d',3);
-  hairFront(person,style,color);
+  if(paintedFaces.complete&&paintedFaces.naturalWidth){
+    const iw=paintedFaces.naturalWidth,ih=paintedFaces.naturalHeight;
+    ctx.drawImage(paintedFaces,(person===0?.041:.536)*iw,.026*ih,.414*iw,.956*ih,-76,-8,152,151);
+  }
+  ctx.save();
+  const blow=state.stage===0&&state.action===3&&dragging&&!reduced;
+  if(blow){ctx.translate(Math.sin(tick/65)*3,-2);ctx.rotate(Math.sin(tick/95)*.018);}
+  hairFront(person,style,color);ctx.restore();
+  if(!reduced&&Math.sin(tick/1800+person)>.996){
+    for(const sign of [-1,1]){oval(sign*29,76,17,22,face);path('M'+(sign*29-13)+' 79q13 8 26 0',null,line,3);}
+  }
   if(formal&&person===0)accessory('crown',model.crown);
   ctx.restore();
 }
@@ -450,6 +468,7 @@ function careOverlay(){
   targets[action].forEach(([x,y],i)=>{
     if(state.done.has(i)&&action>2)return;
     ctx.save();ctx.translate(460+x,157+y);
+    if(!state.done.has(i))ctx.globalAlpha=1-(careEffort.get(i)||0)*.12;
     if(action<3){
       const material=action+Number(state.done.has(i));
       if(material===0){
@@ -467,7 +486,10 @@ function careOverlay(){
     ctx.restore();
   });
   if(pointer&&dragging&&state.done.size<targets[action].length){
-    tool(pointer.x+19,pointer.y-12,action,.8);
+    ctx.save();
+    ctx.translate(pointer.x+19,pointer.y-12);ctx.rotate(reduced?0:Math.sin(tick/85)*.12);tool(0,0,action,.8);ctx.restore();
+    if(action===1){for(let j=0;j<8;j++){const fall=(tick/5+j*9)%65;drop(pointer.x-25+j*4,pointer.y+fall);}}
+    if(action===3){for(let j=0;j<4;j++){const wave=Math.sin(tick/100+j)*5;path('M'+(pointer.x-25)+' '+(pointer.y+j*8)+'q-25 '+wave+' -55 0',null,'#fff2d5aa',2);}}
   }
 }
 function garden(){
@@ -544,6 +566,10 @@ function drawParticles(){
 }
 function drawBackdrop(){
   const stage=state.stage;
+  if(paintedRooms.complete && paintedRooms.naturalWidth){
+    const sw=paintedRooms.naturalWidth/2, sh=paintedRooms.naturalHeight/2;
+    ctx.drawImage(paintedRooms,(stage%2)*sw,Math.floor(stage/2)*sh,sw,sh,0,0,W,H);return;
+  }
   if(!backdrops[stage]){
     const canvas=document.createElement('canvas');
     canvas.width=W;canvas.height=H;
@@ -590,6 +616,9 @@ function frame(now){
     if(!reduced){p.x+=p.dx*delta;p.y+=p.dy*delta;p.dy+=.03*delta;}
   }
   particles=particles.filter(p=>p.life<p.max);
+  if(dragging&&pointer&&state.stage===0&&(state.action===1||state.action===3)&&now-lastFlow>90){
+    applyCare(pointer.x,pointer.y);lastFlow=now;
+  }
   draw();requestAnimationFrame(frame);
 }
 function button(text,callback,options={}){
@@ -650,7 +679,7 @@ function careNext(){
   if(state.action<4)state.action++;
   else if(state.person===0){state.person=1;state.action=0;}
   else{state.stage=1;state.person=0;}
-  state.done.clear();keyboardIndex=0;pointer=null;dragging=false;renderPanel();
+  state.done.clear();careEffort.clear();keyboardIndex=0;pointer=null;dragging=false;renderPanel();
   panel.querySelector(state.stage===0?'.keyboard':'.person button').focus();
 }
 function carePanel(){
@@ -769,6 +798,8 @@ function applyCare(x,y){
   targets[action].forEach(([tx,ty],i)=>{
     const px=460+tx,py=157+ty;
     if(state.done.has(i)||Math.hypot(x-px,y-py)>21)return;
+    const effort=(careEffort.get(i)||0)+1;careEffort.set(i,effort);
+    if(effort<5)return;
     state.done.add(i);updated=true;
     burst(px,py,action===1?'water':'spark',action===1?10:6);
   });
@@ -778,7 +809,7 @@ function keyboardCare(){
   const points=targets[state.action];
   while(keyboardIndex<points.length&&state.done.has(keyboardIndex))keyboardIndex++;
   if(keyboardIndex===points.length)return;
-  const [x,y]=points[keyboardIndex];applyCare(460+x,157+y);
+  const [x,y]=points[keyboardIndex];for(let pass=0;pass<5;pass++)applyCare(460+x,157+y);
   if(state.done.size===points.length)panel.querySelector('.primary').focus();
 }
 function position(event){
